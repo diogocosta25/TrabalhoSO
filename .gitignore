@@ -1,0 +1,5 @@
+*.o
+controlador
+cliente
+veiculo
+.vscode/
