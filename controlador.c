@@ -65,13 +65,23 @@ void mandaVeiculo(int index){
 
     if (pipe(fd_anonimo)== -1){
         perror("Erro ao criar pipe anonimo");
+        return;
     }
     pid_t pid=fork();
 
-    if (pid==0){
+    if (pid==-1){
+        perror("Erro no fork");
+        return;
+    }
+
+    if (pid == 0){
 
         close(fd_anonimo[0]);
-        dup2(fd_anonimo[1],STDOUT_FILENO);
+
+        if (dup2(fd_anonimo[1],STDOUT_FILENO) == -1){
+        perror("Erro no dup2");
+        exit(1);
+        }
         close (fd_anonimo[1]);  
 
 
@@ -86,10 +96,29 @@ void mandaVeiculo(int index){
 
         execl("./veiculo", "./veiculo", arg_id, arg_pid_cliente, arg_dist, NULL);
 
+        perror("Erro ao executar veiculo");
+        exit(1);
         //---------------------------------tava aqui
+    }else {
+        close(fd_anonimo[1]);
+
+        printf("Veiculo lançado para a viagem %d\n",viagem[index].id);
+
+        pthread_mutex_lock(&trinco);
+        veiculosCirculacao++;
+        viagem[index].estado = 1;
+        pthread_mutex_unlock(&trinco);
+
+        pthread_t t_monitor;
+        int *fd_leitura = malloc(sizeof(int));
+        *fd_leitura = fd_anonimo[0];
+
+        if (pthread_create(&t_monitor, NULL, monitorVeiculo, fd_leitura)!= 0){
+            perror("Erro ao criar thread de monotorização");
+        }else {
+            pthread_detach(t_monitor);
+        }
     }
-
-
 };
 
 void *processaPedido(void *arg) {
@@ -148,7 +177,8 @@ void *processaPedido(void *arg) {
 
         pthread_mutex_lock(&trinco); 
 
-        if (nViagens < MAX_SERVICOS) {
+        if (nViagens < MAX_SERVICOS && veiculosCirculacao < maxVeiculos) {
+
             int horaV, distV;
             char loc[TAM_ARGUMENTOS];
 
@@ -166,6 +196,7 @@ void *processaPedido(void *arg) {
                 r.sucesso=1;
                 sprintf(r.mensagem, "--Viagem agendada--");
                 printf("Nova Viagem ID %d: Cliente=%s, Hora=%d, Origem=%s, Dist=%d\n",viagem[nViagens].id, p.username, horaV, loc, distV);
+                mandaVeiculo(nViagens);
                 nViagens++;
             };
         } else {
@@ -190,6 +221,14 @@ void *processaPedido(void *arg) {
 }
 
 int main() {
+    char *env_nveiculos = getenv("NVEICULOS");
+    if(env_nveiculos){
+        maxVeiculos = atoi(env_nveiculos);
+    } else {
+        maxVeiculos = 10;
+    }
+    printf("Max Veiculos: %d/n", maxVeiculos);
+    
     Pedido p;
     int fd_fifo;
 
