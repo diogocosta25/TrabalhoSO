@@ -35,6 +35,8 @@
     int veiculosCirculacao=0;
     int tempoDecorrido=0;
 
+    volatile int running=1;
+
 
     pthread_mutex_t trinco = PTHREAD_MUTEX_INITIALIZER;
 
@@ -98,7 +100,7 @@
 
             perror("Erro ao executar veiculo");
             exit(1);
-            //---------------------------------tava aqui
+
         }else {
             close(fd_anonimo[1]);
 
@@ -156,18 +158,18 @@
                     strncpy(utilizadores[n_users], p.username, TAM_NOME);
                     n_users++;
                     r.sucesso = 1;
-                    strcpy(r.mensagem, "Login efetuado com sucesso!");
+                    strcpy(r.mensagem, "Login efetuado com sucesso\n");
                     printf("Novo utilizador registado: %s\n", p.username);
                 } else {
                     //Duplicado
-                    strcpy(r.mensagem, "Erro: Username já está em uso");
+                    strcpy(r.mensagem, "Erro: Username já está em uso\n");
                     r.sucesso = 0;
                 }
 
             } else {
                 //Cheio
                 r.sucesso = 0;
-                strcpy(r.mensagem, "Maximo de utilizadores atingido");
+                strcpy(r.mensagem, "Maximo de utilizadores atingido\n");
             }
 
             pthread_mutex_unlock(&trinco); 
@@ -197,18 +199,17 @@
                     r.sucesso=1;
                     sprintf(r.mensagem, "--Viagem agendada--");
                     printf("Nova Viagem ID %d: Cliente=%s, Hora=%d, Origem=%s, Dist=%d\n",viagem[nViagens].id, p.username, horaV, loc, distV);
-                    mandaVeiculo(nViagens);
                     nViagens++;
                 };
             } else {
                 r.sucesso = 0;
-                strcpy(r.mensagem, "Lista de serviços cheia");
+                strcpy(r.mensagem, "Lista de serviços cheia\n");
             }
 
             pthread_mutex_unlock(&trinco);
         }
         else {
-            sprintf(r.mensagem, "Comando desconhecido: %s", p.comando);
+            sprintf(r.mensagem, "Comando desconhecido: %s \n", p.comando);
         }
 
 
@@ -229,12 +230,19 @@
             sleep(1);
             pthread_mutex_lock(&trinco);
 
+            if (!running){
+                pthread_mutex_unlock(&trinco);
+                printf("Nao sei bem o que escrever lalalala");
+                return NULL;
+            }
+
             tempoDecorrido++;
-            printf("Timer: hora atual -> %d", tempoDecorrido);
+            //esta linha debaixo é so para testagem, depois apagar---------------------------------------
+            printf("Timer: hora atual -> %d \n", tempoDecorrido);
 
             for (int i=0; i<nViagens; i++){
                 if(viagem[i].estado==0 && viagem[i].hora==tempoDecorrido){
-                    printf("Timer: Viagem id: %d , inciada (Cliente: %s) ás %d horas", viagem[i].id, viagem[i].cliente, tempoDecorrido);
+                    printf("Timer: Viagem id: %d , inciada (Cliente: %s) ás %d horas \n", viagem[i].id, viagem[i].cliente, tempoDecorrido);
 
                     mandaVeiculo(i);
                 }
@@ -270,7 +278,7 @@
             pthread_mutex_lock(&trinco);
 
             if (strcmp(comando, "listar")==0){
-                printf("->Lista de servicos agendados (%d totais)", nViagens);
+                printf("->Lista de servicos agendados (%d totais)\n", nViagens);
                 for(int i=0;i<nViagens;i++){
                     char *estado_str;
                     switch(viagem[i].estado){
@@ -285,15 +293,13 @@
                 printf("======================\n");
 
             }else if(strcmp(comando, "hora")==0){
-                printf("Tempo Atual: %d", tempoDecorrido);
+                printf("Tempo Atual: %d \n", tempoDecorrido);
             }else if (strcmp(comando, "km")==0){
-                // NOTA: Precisas de uma variável global (e protegida) para totalKm. 
+                // NOTA: Precisas de uma variável global (e protegida) para totalKm. -----------------------------------
             printf("Total de Quilómetros Percorridos (TODO: Implementar variável global): 0 Km\n");
             }else if(strcmp(comando, "terminar")==0){
                 printf("ADMIN->A encerrar o sistema\n");
-                // NOTA: Para implementar corretamente o "terminar", precisas de uma flag global
-                // (e.g., int running = 1;) para que todas as threads saibam quando parar.
-                // Por enquanto, apenas vamos terminar esta thread.
+                running=0;
                 pthread_mutex_unlock(&trinco);
                 return NULL;
             }else{
@@ -305,6 +311,9 @@
     }
 
     int main() {
+
+        setbuf(stdout, NULL);
+
         char *env_nveiculos = getenv("NVEICULOS");
         if(env_nveiculos){
             maxVeiculos = atoi(env_nveiculos);
