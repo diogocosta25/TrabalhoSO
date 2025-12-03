@@ -15,6 +15,8 @@ int main(int argc, char *argv[]){
     int pid_cliente = atoi(argv[2]);
     int distancia = atoi(argv[3]);
 
-    printf("Veiculo em viagem %d (Distancia: %d Km)\n"),id_v
-    char fifo_cliente
+    printf("Veiculo em viagem %d (Distancia: %d Km)\n",id_viagem, distancia);
+
+    char fifo_cliente[100];
+
 }
