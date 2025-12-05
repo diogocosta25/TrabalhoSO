@@ -35,8 +35,6 @@
     int veiculosCirculacao=0;
     int tempoDecorrido=0;
 
-    volatile int running=1;
-
 
     pthread_mutex_t trinco = PTHREAD_MUTEX_INITIALIZER;
 
@@ -137,7 +135,7 @@
 
         snprintf(fifo_resposta, sizeof(fifo_resposta), "%s%d", CLIENTE_FIFO_BASE, p.pid_cliente);
 
-        printf("Thread %lu -> Recebi o comando '%s' de '%s' \n", (unsigned long)pthread_self(), p.comando, p.username);
+        printf("\nThread %lu -> Recebi o comando '%s' de '%s' \n", (unsigned long)pthread_self(), p.comando, p.username);
         
         // LOGIN ou NewUser
         if (strcmp(p.comando, "login") == 0) {
@@ -160,6 +158,7 @@
                     r.sucesso = 1;
                     strcpy(r.mensagem, "Login efetuado com sucesso\n");
                     printf("Novo utilizador registado: %s\n", p.username);
+                    printf("ADMIN>");
                 } else {
                     //Duplicado
                     strcpy(r.mensagem, "Erro: Username já está em uso\n");
@@ -168,7 +167,7 @@
 
             } else {
                 //Cheio
-                r.sucesso = 0;
+                r.sucesso = 0;  
                 strcpy(r.mensagem, "Maximo de utilizadores atingido\n");
             }
 
@@ -198,7 +197,7 @@
 
                     r.sucesso=1;
                     sprintf(r.mensagem, "--Viagem agendada--");
-                    printf("Nova Viagem ID %d: Cliente=%s, Hora=%d, Origem=%s, Dist=%d\n",viagem[nViagens].id, p.username, horaV, loc, distV);
+                    printf("\nNova Viagem ID %d: Cliente=%s, Hora=%d, Origem=%s, Dist=%d\n",viagem[nViagens].id, p.username, horaV, loc, distV);
                     nViagens++;
                 };
             } else {
@@ -230,19 +229,15 @@
             sleep(1);
             pthread_mutex_lock(&trinco);
 
-            if (!running){
-                pthread_mutex_unlock(&trinco);
-                printf("Nao sei bem o que escrever lalalala");
-                return NULL;
-            }
+            
 
             tempoDecorrido++;
             //esta linha debaixo é so para testagem, depois apagar---------------------------------------
-            printf("Timer: hora atual -> %d \n", tempoDecorrido);
+            //printf("Timer: hora atual -> %d \n", tempoDecorrido);
 
-            for (int i=0; i<nViagens; i++){
+            for (int i=0; i<nViagens; i++){ 
                 if(viagem[i].estado==0 && viagem[i].hora==tempoDecorrido){
-                    printf("Timer: Viagem id: %d , inciada (Cliente: %s) ás %d horas \n", viagem[i].id, viagem[i].cliente, tempoDecorrido);
+                    printf("\nTimer: Viagem id: %d , inciada (Cliente: %s) ás %d horas \n", viagem[i].id, viagem[i].cliente, tempoDecorrido);
 
                     mandaVeiculo(i);
                 }
@@ -299,7 +294,6 @@
             printf("Total de Quilómetros Percorridos (TODO: Implementar variável global): 0 Km\n");
             }else if(strcmp(comando, "terminar")==0){
                 printf("ADMIN->A encerrar o sistema\n");
-                running=0;
                 pthread_mutex_unlock(&trinco);
                 return NULL;
             }else{
