@@ -41,45 +41,22 @@ pthread_mutex_t trinco = PTHREAD_MUTEX_INITIALIZER;
 
 void processa_telemetria(char *linha) {
     int id, perc;
-    
+    pthread_mutex_lock(&trinco);
     if (sscanf(linha, "VIAGEM %d %d%%", &id, &perc) == 2) {
-        pthread_mutex_lock(&trinco);
-        int idx = id - 1;
-        
-        if (idx >= 0 && idx < nViagens) {
-            viagem[idx].percentagem_atual = perc;
-            
-            int km_reais = (viagem[idx].distancia * perc) / 100;
-            int delta = km_reais - viagem[idx].km_percorridos_temp;
-            
-            if (delta > 0) {
-                viagem[idx].km_percorridos_temp = km_reais;
-                total_km += delta;
-            }
-        }
-        pthread_mutex_unlock(&trinco);
+        if (id > 0 && id <= nViagens) viagem[id-1].percentagem_atual = perc;
     }
-    else if (strstr(linha, "CONCLUIDA") != NULL || strstr(linha, "CANCELADA") != NULL) {
+    else if (strstr(linha, "CONCLUIDA") || strstr(linha, "CANCELADA")) {
         int id_concl;
         sscanf(linha, "VIAGEM %d", &id_concl);
-        
-        pthread_mutex_lock(&trinco);
         int idx = id_concl - 1;
-        
-        if (idx >= 0 && idx < nViagens) {
+        if (idx >= 0 && idx < nViagens && viagem[idx].estado == 1) {
             viagem[idx].estado = 2;
-            printf("[CONTROLADOR] Viagem %d terminada. Vaga libertada.\n", id_concl);
-            
-            int falta = viagem[idx].distancia - viagem[idx].km_percorridos_temp;
-            if (falta > 0 && strstr(linha, "CONCLUIDA")) {
-                total_km += falta;
-            }
-            
             veiculosCirculacao--;
-            printf("[CONTROLADOR] Veiculos ativos: %d\n", veiculosCirculacao);
+            printf("[CONTROLADOR] Viagem %d terminou/cancelada. Vagas: %d\n", id_concl, maxVeiculos - veiculosCirculacao);
+            waitpid(viagem[idx].pidVeiculo, NULL, 0);
         }
-        pthread_mutex_unlock(&trinco);
     }
+    pthread_mutex_unlock(&trinco);
 }
 
 void *monitorVeiculo(void *arg){
