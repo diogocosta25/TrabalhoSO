@@ -8,6 +8,7 @@
 #include <pthread.h> 
 #include <sys/wait.h>
 #include <sys/types.h>
+#include <signal.h>
 
 #include "comum.h" 
 
@@ -22,6 +23,7 @@ typedef struct {
     int estado; 
     int hora;
     int pidCliente;
+    int pidVeiculo;
     int km_percorridos_temp;
     int percentagem_atual;
 } Viagem;
@@ -39,20 +41,50 @@ long long total_km = 0;
 
 pthread_mutex_t trinco = PTHREAD_MUTEX_INITIALIZER;
 
+void enviar_resposta(int pid_cliente, Resposta *r) {
+    char fifo_resposta[100];
+    snprintf(fifo_resposta, sizeof(fifo_resposta), "%s%d", CLIENTE_FIFO_BASE, pid_cliente);
+    int fd_cli = open(fifo_resposta, O_WRONLY);
+    if (fd_cli != -1) {
+        write(fd_cli, r, sizeof(Resposta));
+        close(fd_cli);
+    }
+}
+
 void processa_telemetria(char *linha) {
     int id, perc;
+    
     pthread_mutex_lock(&trinco);
+    
     if (sscanf(linha, "VIAGEM %d %d%%", &id, &perc) == 2) {
-        if (id > 0 && id <= nViagens) viagem[id-1].percentagem_atual = perc;
+        int idx = id - 1;
+        if (idx >= 0 && idx < nViagens) {
+            viagem[idx].percentagem_atual = perc;
+            
+            int km_reais_agora = (viagem[idx].distancia * perc) / 100;
+            int delta = km_reais_agora - viagem[idx].km_percorridos_temp;
+            
+            if (delta > 0) {
+                viagem[idx].km_percorridos_temp = km_reais_agora;
+                total_km += delta;
+            }
+        }
     }
-    else if (strstr(linha, "CONCLUIDA") || strstr(linha, "CANCELADA")) {
+    else if (strstr(linha, "CONCLUIDA") != NULL || strstr(linha, "CANCELADA") != NULL) {
         int id_concl;
         sscanf(linha, "VIAGEM %d", &id_concl);
         int idx = id_concl - 1;
+        
         if (idx >= 0 && idx < nViagens && viagem[idx].estado == 1) {
             viagem[idx].estado = 2;
+            
+            if (strstr(linha, "CONCLUIDA")) {
+                int falta = viagem[idx].distancia - viagem[idx].km_percorridos_temp;
+                if (falta > 0) total_km += falta;
+            }
+
             veiculosCirculacao--;
-            printf("[CONTROLADOR] Viagem %d terminou/cancelada. Vagas: %d\n", id_concl, maxVeiculos - veiculosCirculacao);
+            printf("[CONTROLADOR] Viagem %d terminou. Vagas: %d\n", id_concl, maxVeiculos - veiculosCirculacao);
             waitpid(viagem[idx].pidVeiculo, NULL, 0);
         }
     }
@@ -128,10 +160,9 @@ void mandaVeiculo(int index){
 
         printf("Veiculo lançado para a viagem %d\n",viagem[index].id);
 
-        pthread_mutex_lock(&trinco);
         veiculosCirculacao++;
         viagem[index].estado = 1;
-        pthread_mutex_unlock(&trinco);
+        viagem[index].pidVeiculo = pid;
 
         pthread_t t_monitor;
         int *fd_leitura = malloc(sizeof(int));
@@ -149,29 +180,22 @@ void *processaPedido(void *arg) {
     Pedido p = *(Pedido*)arg;
     free(arg); 
 
-    char fifo_resposta[100];
     Resposta r;
-
     r.sucesso = 0;
     strcpy(r.mensagem, "Erro desconhecido");
-
-    snprintf(fifo_resposta, sizeof(fifo_resposta), "%s%d", CLIENTE_FIFO_BASE, p.pid_cliente);
+    strcpy(r.dados_extra, "");
 
     printf("\nThread %lu -> Recebi o comando '%s' de '%s' \n", (unsigned long)pthread_self(), p.comando, p.username);
     
     if (strcmp(p.comando, "login") == 0) {
         pthread_mutex_lock(&trinco); 
-
         if (n_users < MAX_USERS) {
-            
             int existe = 0;
             for (int i = 0; i < n_users; i++) {
                 if(strcmp(utilizadores[i], p.username) == 0) {
-                    existe = 1;
-                    break;
+                    existe = 1; break;
                 }
             }
-
             if (existe == 0) {
                 strncpy(utilizadores[n_users], p.username, TAM_NOME);
                 n_users++;
@@ -183,32 +207,26 @@ void *processaPedido(void *arg) {
                 strcpy(r.mensagem, "Erro: Username já está em uso\n");
                 r.sucesso = 0;
             }
-
         } else {
             r.sucesso = 0;  
             strcpy(r.mensagem, "Maximo de utilizadores atingido\n");
         }
-
         pthread_mutex_unlock(&trinco); 
+        enviar_resposta(p.pid_cliente, &r);
     }
     else if (strcmp(p.comando, "agendar") == 0) {
         pthread_mutex_lock(&trinco); 
-
-        if (nViagens < MAX_SERVICOS && veiculosCirculacao < maxVeiculos) {
+        if (nViagens < MAX_SERVICOS) {
             int horaV, distV;
             char loc[TAM_ARGUMENTOS];
-
             if (sscanf(p.args, "%d %s %d",&horaV, loc, &distV )==3){
                 viagem[nViagens].id=nViagens +1;
                 strncpy (viagem[nViagens].cliente, p.username, TAM_NOME);
-
                 viagem[nViagens].hora=horaV;
                 viagem[nViagens].distancia= distV;
                 strncpy(viagem[nViagens].origem, loc,TAM_ARGUMENTOS);
                 viagem[nViagens].pidCliente = p.pid_cliente; 
-
                 viagem[nViagens].estado=0;
-
                 r.sucesso=1;
                 sprintf(r.mensagem, "--Viagem agendada--");
                 printf("\nNova Viagem ID %d: Cliente=%s, Hora=%d, Origem=%s, Dist=%d\n",viagem[nViagens].id, p.username, horaV, loc, distV);
@@ -216,19 +234,56 @@ void *processaPedido(void *arg) {
             }
         } else {
             r.sucesso = 0;
-            strcpy(r.mensagem, "Lista de serviços cheia ou frota ocupada\n");
+            strcpy(r.mensagem, "Lista de serviços cheia\n");
         }
-
         pthread_mutex_unlock(&trinco);
+        enviar_resposta(p.pid_cliente, &r);
+    }
+    else if (strcmp(p.comando, "consultar") == 0) {
+        pthread_mutex_lock(&trinco);
+        int encontrou = 0;
+        for(int i=0; i<nViagens; i++){
+            if (viagem[i].pidCliente == p.pid_cliente) {
+                // CORREÇÃO AQUI: %.20s para limitar o output do destino
+                snprintf(r.mensagem, TAM_MENSAGEM, "ID:%d Hora:%d Dest:%.20s Est:%d", 
+                         viagem[i].id, viagem[i].hora, viagem[i].origem, viagem[i].estado);
+                enviar_resposta(p.pid_cliente, &r);
+                encontrou = 1;
+            }
+        }
+        if(!encontrou) {
+            strcpy(r.mensagem, "Sem viagens agendadas.");
+            enviar_resposta(p.pid_cliente, &r);
+        }
+        pthread_mutex_unlock(&trinco);
+    }
+    else if (strcmp(p.comando, "cancelar") == 0) {
+        int id_cancelar = atoi(p.args);
+        int cancelado = 0;
+        pthread_mutex_lock(&trinco);
+        if (id_cancelar == 0) { 
+             for(int i=0; i<nViagens; i++){
+                 if (viagem[i].pidCliente == p.pid_cliente && viagem[i].estado != 2) {
+                     if (viagem[i].estado == 1) kill(viagem[i].pidVeiculo, SIGUSR1);
+                     viagem[i].estado = 2;
+                     cancelado++;
+                 }
+             }
+        } else {
+            int idx = id_cancelar - 1;
+            if (idx >= 0 && idx < nViagens && viagem[idx].pidCliente == p.pid_cliente && viagem[idx].estado != 2) {
+                if (viagem[idx].estado == 1) kill(viagem[idx].pidVeiculo, SIGUSR1);
+                viagem[idx].estado = 2;
+                cancelado = 1;
+            }
+        }
+        pthread_mutex_unlock(&trinco);
+        sprintf(r.mensagem, "Cancelados: %d servicos", cancelado);
+        enviar_resposta(p.pid_cliente, &r);
     }
     else {
         sprintf(r.mensagem, "Comando desconhecido: %s \n", p.comando);
-    }
-
-    int fd_cli = open(fifo_resposta, O_WRONLY);
-    if (fd_cli != -1) {
-        write(fd_cli, &r, sizeof(Resposta));
-        close(fd_cli);
+        enviar_resposta(p.pid_cliente, &r);
     }
 
     return NULL;
@@ -245,9 +300,11 @@ void *threadTempo(void *arg){
         tempoDecorrido++;
 
         for (int i=0; i<nViagens; i++){ 
-            if(viagem[i].estado==0 && viagem[i].hora==tempoDecorrido){
-                printf("\nTimer: Viagem id: %d , inciada (Cliente: %s) ás %d horas \n", viagem[i].id, viagem[i].cliente, tempoDecorrido);
-                mandaVeiculo(i);
+            if(viagem[i].estado==0 && viagem[i].hora <= tempoDecorrido){
+                if(veiculosCirculacao < maxVeiculos) {
+                    printf("\nTimer: Viagem id: %d , inciada (Cliente: %s) ás %d horas \n", viagem[i].id, viagem[i].cliente, tempoDecorrido);
+                    mandaVeiculo(i);
+                }
             }
         }
         pthread_mutex_unlock(&trinco);
@@ -290,7 +347,6 @@ void *threadAdmin(void *args){
                 printf("ID: %d | Cliente: %s | Origem: %s | Distância: %d Km | Hora: %d | Estado: %s\n",  viagem[i].id, viagem[i].cliente, viagem[i].origem, viagem[i].distancia, viagem[i].hora, estado_str);
             }
             printf("======================\n");
-
             
         }else if(strcmp(comando, "hora")==0){
             printf("Tempo Atual: %d \n", tempoDecorrido);
@@ -316,10 +372,27 @@ void *threadAdmin(void *args){
             }
             printf("======================\n");
         }
-        else if (strcmp(comando, "km")==0){
-            printf("Total de Quilómetros Percorridos: 0 Km\n");
-        }else if(strcmp(comando, "terminar")==0){
+        else if (strcmp(comando, "cancelar")==0) {
+            char *arg = strtok(NULL, " ");
+            if (arg) {
+                int id = atoi(arg);
+                int idx = id - 1;
+                if (idx >= 0 && idx < nViagens && viagem[idx].estado != 2) {
+                    if (viagem[idx].estado == 1) kill(viagem[idx].pidVeiculo, SIGUSR1);
+                    viagem[idx].estado = 2;
+                    printf("Viagem %d cancelada pelo admin.\n", id);
+                } else {
+                    printf("Viagem não encontrada ou já concluída.\n");
+                }
+            } else {
+                printf("Uso: cancelar <id>\n");
+            }
+        }
+        else if(strcmp(comando, "terminar")==0){
             printf("ADMIN->A encerrar o sistema\n");
+            for(int i=0; i<nViagens; i++) 
+                if(viagem[i].estado == 1) kill(viagem[i].pidVeiculo, SIGUSR1);
+            
             pthread_mutex_unlock(&trinco);
             exit(0);
         }else{
@@ -331,6 +404,7 @@ void *threadAdmin(void *args){
 }
 
 int main() {
+    signal(SIGPIPE, SIG_IGN);
     setbuf(stdout, NULL);
 
     char *env_nveiculos = getenv("NVEICULOS");
@@ -376,10 +450,7 @@ int main() {
             continue; 
         }
 
-        ssize_t n = read(fd_fifo, &p, sizeof(Pedido));
-        close(fd_fifo); 
-
-        if (n == sizeof(Pedido)) {
+        while(read(fd_fifo, &p, sizeof(Pedido)) > 0) {
             pthread_t t;
             Pedido *p_thread = malloc(sizeof(Pedido));
             *p_thread = p;
@@ -391,6 +462,7 @@ int main() {
                 pthread_detach(t); 
             }
         }
+        close(fd_fifo); 
     }
 
     unlink(CONTROLADOR_FIFO);

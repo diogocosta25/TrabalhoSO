@@ -131,6 +131,24 @@ int main(int argc, char *argv[]){
                 close(fd_veic);
 
             } else if (strcmp(cmd, "terminar") == 0) {
+                if (strlen(fifo_veiculo_atual) > 0) {
+                    printf("Erro: Nao pode sair durante uma viagem! Use 'sair' primeiro.\n");
+                    continue;
+                }
+
+                p.pid_cliente = getpid();
+                strncpy(p.username, argv[1], TAM_NOME);
+                strncpy(p.comando, "cancelar", TAM_COMANDOS);
+                strncpy(p.args, "0", TAM_ARGUMENTOS);
+
+                fd_controlador = open(CONTROLADOR_FIFO, O_WRONLY);
+                if (fd_controlador != -1){
+                    write(fd_controlador, &p, sizeof(Pedido));
+                    close(fd_controlador);
+                    usleep(100000); 
+                }
+                
+                printf("A terminar e a cancelar agendamentos pendentes...\n");
                 break;
             } else {
                 // comandos para o controlador

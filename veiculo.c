@@ -77,12 +77,12 @@ int main(int argc, char *argv[]) {
     while (continuar && !cliente_entrou) {
         ssize_t n = read(fd_veiculo, &pv, sizeof(PedidoVeiculo));
         if (n == sizeof(PedidoVeiculo)) {
-            if (pv.codigo == 1) { //entrar
+            if (pv.codigo == 1) {
                 cliente_entrou = 1;
                 printf("VIAGEM %d INICIADA DESTINO %s\n", id_viagem, pv.destino);
                 fflush(stdout);
                 
-                snprintf(r.mensagem, TAM_MENSAGEM, "Bem-vindo a bordo. Destino: %s", pv.destino);
+                snprintf(r.mensagem, TAM_MENSAGEM, "Bem-vindo a bordo. Destino: %.60s", pv.destino);
                 strcpy(r.dados_extra, "");
                 write(fd_cli, &r, sizeof(Resposta));
             }
@@ -91,7 +91,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // 4. Iniciar Viagem
+    // Iniciar Viagem
     int percorrido = 0;
     int ultimo_aviso_perc = 0;
     
@@ -135,11 +135,11 @@ int main(int argc, char *argv[]) {
     }
 
     if (!continuar) {
-        printf("VIAGEM %d CANCELADA\n", id_viagem); // Telemetria
+        printf("VIAGEM %d CANCELADA\n", id_viagem); 
         snprintf(r.mensagem, TAM_MENSAGEM, "Servico cancelado pelo controlador.");
         write(fd_cli, &r, sizeof(Resposta));
     } else if (percorrido >= distancia) {
-        printf("VIAGEM %d CONCLUIDA\n", id_viagem); // Telemetria
+        printf("VIAGEM %d CONCLUIDA\n", id_viagem); 
         snprintf(r.mensagem, TAM_MENSAGEM, "Chegamos ao destino.");
         write(fd_cli, &r, sizeof(Resposta));
     }
