@@ -20,7 +20,7 @@ typedef struct {
     char cliente[TAM_NOME];
     char origem[TAM_ARGUMENTOS]; 
     int distancia; 
-    int estado; 
+    int estado;
     int hora;
     int pidCliente;
     int pidVeiculo;
@@ -84,8 +84,7 @@ void processa_telemetria(char *linha) {
             }
 
             veiculosCirculacao--;
-            printf("[CONTROLADOR] Viagem %d terminou. Vagas: %d\n", id_concl, maxVeiculos - veiculosCirculacao);
-            waitpid(viagem[idx].pidVeiculo, NULL, 0);
+            printf("[CONTROLADOR] Viagem %d terminada. Vagas: %d\n", id_concl, maxVeiculos - veiculosCirculacao);
         }
     }
     pthread_mutex_unlock(&trinco);
@@ -220,17 +219,22 @@ void *processaPedido(void *arg) {
             int horaV, distV;
             char loc[TAM_ARGUMENTOS];
             if (sscanf(p.args, "%d %s %d",&horaV, loc, &distV )==3){
-                viagem[nViagens].id=nViagens +1;
-                strncpy (viagem[nViagens].cliente, p.username, TAM_NOME);
-                viagem[nViagens].hora=horaV;
-                viagem[nViagens].distancia= distV;
-                strncpy(viagem[nViagens].origem, loc,TAM_ARGUMENTOS);
-                viagem[nViagens].pidCliente = p.pid_cliente; 
-                viagem[nViagens].estado=0;
-                r.sucesso=1;
-                sprintf(r.mensagem, "--Viagem agendada--");
-                printf("\nNova Viagem ID %d: Cliente=%s, Hora=%d, Origem=%s, Dist=%d\n",viagem[nViagens].id, p.username, horaV, loc, distV);
-                nViagens++;
+                if (horaV <= tempoDecorrido) {
+                    r.sucesso = 0;
+                    strcpy(r.mensagem, "Erro: Hora invalida (ja passou)");
+                } else {
+                    viagem[nViagens].id=nViagens +1;
+                    strncpy (viagem[nViagens].cliente, p.username, TAM_NOME);
+                    viagem[nViagens].hora=horaV;
+                    viagem[nViagens].distancia= distV;
+                    strncpy(viagem[nViagens].origem, loc,TAM_ARGUMENTOS);
+                    viagem[nViagens].pidCliente = p.pid_cliente; 
+                    viagem[nViagens].estado=0;
+                    r.sucesso=1;
+                    sprintf(r.mensagem, "--Viagem agendada--");
+                    printf("\nNova Viagem ID %d: Cliente=%s, Hora=%d, Origem=%s, Dist=%d\n",viagem[nViagens].id, p.username, horaV, loc, distV);
+                    nViagens++;
+                }
             }
         } else {
             r.sucesso = 0;
@@ -244,7 +248,6 @@ void *processaPedido(void *arg) {
         int encontrou = 0;
         for(int i=0; i<nViagens; i++){
             if (viagem[i].pidCliente == p.pid_cliente) {
-                // CORREÇÃO AQUI: %.20s para limitar o output do destino
                 snprintf(r.mensagem, TAM_MENSAGEM, "ID:%d Hora:%d Dest:%.20s Est:%d", 
                          viagem[i].id, viagem[i].hora, viagem[i].origem, viagem[i].estado);
                 enviar_resposta(p.pid_cliente, &r);
@@ -264,16 +267,22 @@ void *processaPedido(void *arg) {
         if (id_cancelar == 0) { 
              for(int i=0; i<nViagens; i++){
                  if (viagem[i].pidCliente == p.pid_cliente && viagem[i].estado != 2) {
-                     if (viagem[i].estado == 1) kill(viagem[i].pidVeiculo, SIGUSR1);
-                     viagem[i].estado = 2;
+                     if (viagem[i].estado == 1) {
+                         kill(viagem[i].pidVeiculo, SIGUSR1);
+                     } else {
+                         viagem[i].estado = 2;
+                     }
                      cancelado++;
                  }
              }
         } else {
             int idx = id_cancelar - 1;
             if (idx >= 0 && idx < nViagens && viagem[idx].pidCliente == p.pid_cliente && viagem[idx].estado != 2) {
-                if (viagem[idx].estado == 1) kill(viagem[idx].pidVeiculo, SIGUSR1);
-                viagem[idx].estado = 2;
+                if (viagem[idx].estado == 1) {
+                    kill(viagem[idx].pidVeiculo, SIGUSR1);
+                } else {
+                    viagem[idx].estado = 2;
+                }
                 cancelado = 1;
             }
         }
@@ -378,8 +387,11 @@ void *threadAdmin(void *args){
                 int id = atoi(arg);
                 int idx = id - 1;
                 if (idx >= 0 && idx < nViagens && viagem[idx].estado != 2) {
-                    if (viagem[idx].estado == 1) kill(viagem[idx].pidVeiculo, SIGUSR1);
-                    viagem[idx].estado = 2;
+                    if (viagem[idx].estado == 1) {
+                         kill(viagem[idx].pidVeiculo, SIGUSR1);
+                    } else {
+                         viagem[idx].estado = 2;
+                    }
                     printf("Viagem %d cancelada pelo admin.\n", id);
                 } else {
                     printf("Viagem não encontrada ou já concluída.\n");
@@ -403,8 +415,28 @@ void *threadAdmin(void *args){
     return NULL;    
 }
 
+void trata_ctrl_c(int s) {
+    (void)s;
+    printf("\n[CONTROLADOR] A encerrar por CTRL+C...\n");
+
+    pthread_mutex_lock(&trinco);
+    for(int i = 0; i < nViagens; i++) {
+        if (viagem[i].estado == 1) {
+            printf("A parar veiculo da viagem %d (PID: %d)...\n", viagem[i].id, viagem[i].pidVeiculo);
+            kill(viagem[i].pidVeiculo, SIGUSR1);
+        }
+    }
+    pthread_mutex_unlock(&trinco);
+
+    unlink(CONTROLADOR_FIFO);
+    
+    exit(0);
+}
+
 int main() {
     signal(SIGPIPE, SIG_IGN);
+    signal(SIGCHLD, SIG_IGN);
+    signal(SIGINT, trata_ctrl_c);
     setbuf(stdout, NULL);
 
     char *env_nveiculos = getenv("NVEICULOS");

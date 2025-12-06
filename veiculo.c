@@ -16,7 +16,16 @@ void trata_sinal(int s) {
     continuar = 0;
 }
 
+int envia_mensagem(int fd, Resposta *r) {
+    if (write(fd, r, sizeof(Resposta)) == -1) {
+        return 0; // cliente morreu
+    }
+    return 1;
+}
+
 int main(int argc, char *argv[]) {
+    signal(SIGPIPE, SIG_IGN);
+
     if (argc < 4) {
         fprintf(stderr, "Erro: argumentos insuficientes.\n");
         return 1;
@@ -73,7 +82,6 @@ int main(int argc, char *argv[]) {
 
     int cliente_entrou = 0;
     
-    // Loop de espera para entrar
     while (continuar && !cliente_entrou) {
         ssize_t n = read(fd_veiculo, &pv, sizeof(PedidoVeiculo));
         if (n == sizeof(PedidoVeiculo)) {
@@ -91,7 +99,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Iniciar Viagem
     int percorrido = 0;
     int ultimo_aviso_perc = 0;
     
@@ -109,8 +116,9 @@ int main(int argc, char *argv[]) {
         if (activity > 0 && FD_ISSET(fd_veiculo, &read_fds)) {
             ssize_t n = read(fd_veiculo, &pv, sizeof(PedidoVeiculo));
             if (n == sizeof(PedidoVeiculo) && pv.codigo == 2) { // SAIR
-                printf("VIAGEM %d INTERROMPIDA PELO CLIENTE\n", id_viagem);
-                snprintf(r.mensagem, TAM_MENSAGEM, "Viagem interrompida. Obrigado.");
+                printf("VIAGEM %d CANCELADA PELO CLIENTE\n", id_viagem);
+                fflush(stdout);
+                snprintf(r.mensagem, TAM_MENSAGEM, "Viagem interrompida.");
                 write(fd_cli, &r, sizeof(Resposta));
                 cliente_entrou = 0;
                 break;
@@ -122,30 +130,33 @@ int main(int argc, char *argv[]) {
             int percentagem = (percorrido * 100) / distancia;
 
             if (percentagem >= ultimo_aviso_perc + 10 || percorrido == distancia) {
-                // Telemetria para o controlador
                 printf("VIAGEM %d %d%%\n", id_viagem, percentagem);
                 fflush(stdout);
 
-                // Aviso ao cliente
                 snprintf(r.mensagem, TAM_MENSAGEM, "Progresso: %d%%", percentagem);
-                write(fd_cli, &r, sizeof(Resposta));
+                
+                if (!envia_mensagem(fd_cli, &r)) {
+                    printf("VIAGEM %d CANCELADA (CLIENTE PERDIDO)\n", id_viagem);
+                    fflush(stdout);
+                    continuar = 0;
+                    break;
+                }
                 ultimo_aviso_perc = percentagem - (percentagem % 10);
             }
         }
     }
 
     if (!continuar) {
-        printf("VIAGEM %d CANCELADA\n", id_viagem); 
-        snprintf(r.mensagem, TAM_MENSAGEM, "Servico cancelado pelo controlador.");
-        write(fd_cli, &r, sizeof(Resposta));
+        if (percorrido < distancia) {
+        }
     } else if (percorrido >= distancia) {
         printf("VIAGEM %d CONCLUIDA\n", id_viagem); 
         snprintf(r.mensagem, TAM_MENSAGEM, "Chegamos ao destino.");
-        write(fd_cli, &r, sizeof(Resposta));
+        envia_mensagem(fd_cli, &r);
     }
 
-    close(fd_cli);
-    close(fd_veiculo);
-    unlink(fifo_veiculo);
-    return 0;
+        close(fd_cli);
+        close(fd_veiculo);
+        unlink(fifo_veiculo);
+        return 0;
 }
