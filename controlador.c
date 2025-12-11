@@ -15,15 +15,13 @@
 #define MAX_USERS 30
 #define MAX_SERVICOS 30
 
-// --- 1. ESTRUTURAS DE DADOS ---
 
-// Estrutura para representar uma viagem
 typedef struct {
     int id;
     char cliente[TAM_NOME];
     char origem[TAM_ARGUMENTOS]; 
     int distancia; 
-    int estado; // 0: Agendado, 1: A decorrer, 2: Concluido
+    int estado; // 0: Agendado 1: A decorrer 2: Concluido
     int hora;
     int pidCliente;
     int pidVeiculo;
@@ -31,7 +29,6 @@ typedef struct {
     int percentagem_atual;
 } Viagem;
 
-// A ESTRUTURA PRINCIPAL (Onde está tudo, incluindo o Mutex)
 typedef struct {
     Viagem viagens[MAX_SERVICOS];
     int nViagens;
@@ -41,30 +38,23 @@ typedef struct {
     int veiculosCirculacao;
     int tempoDecorrido;
     long long total_km;
-    
-    // O TRINCO ESTÁ AQUI DENTRO (Requisito do Prof)
     pthread_mutex_t trinco; 
 } DadosControl;
 
-// --- ESTRUTURAS AUXILIARES (Pacotes para passar às threads) ---
 
-// Pacote para a thread que processa pedidos do cliente
 typedef struct {
     Pedido p;
-    DadosControl *dados; // Ponteiro para a memória partilhada
+    DadosControl *dados; 
 } ArgsPedido;
 
-// Pacote para a thread que monitoriza cada veículo
 typedef struct {
     int fd_pipe;
-    DadosControl *dados; // Ponteiro para a memória partilhada
+    DadosControl *dados; 
 } ArgsMonitor;
 
-// Ponteiro global APENAS para o signal handler conseguir limpar tudo no CTRL+C
 DadosControl *ptr_dados_global = NULL;
 
 
-// --- FUNÇÕES ---
 
 void enviar_resposta(int pid_cliente, Resposta *r) {
     char fifo_resposta[100];
@@ -76,18 +66,16 @@ void enviar_resposta(int pid_cliente, Resposta *r) {
     }
 }
 
-// Esta função agora recebe 'DadosControl *d' para poder alterar os dados
 void processa_telemetria(char *linha, DadosControl *d) {
     int id, perc;
     
-    pthread_mutex_lock(&d->trinco); // Bloqueia o trinco DA ESTRUTURA
+    pthread_mutex_lock(&d->trinco); 
     
     if (sscanf(linha, "VIAGEM %d %d%%", &id, &perc) == 2) {
         int idx = id - 1;
         if (idx >= 0 && idx < d->nViagens) {
             d->viagens[idx].percentagem_atual = perc;
             
-            // Contabilizar Km
             int km_reais_agora = (d->viagens[idx].distancia * perc) / 100;
             int delta = km_reais_agora - d->viagens[idx].km_percorridos_temp;
             
@@ -103,7 +91,7 @@ void processa_telemetria(char *linha, DadosControl *d) {
         int idx = id_concl - 1;
         
         if (idx >= 0 && idx < d->nViagens && d->viagens[idx].estado == 1) {
-            d->viagens[idx].estado = 2; // Estado 2 = Concluída/Cancelada
+            d->viagens[idx].estado = 2; 
             
             if (strstr(linha, "CONCLUIDA")) {
                 int falta = d->viagens[idx].distancia - d->viagens[idx].km_percorridos_temp;
@@ -117,19 +105,16 @@ void processa_telemetria(char *linha, DadosControl *d) {
     pthread_mutex_unlock(&d->trinco);
 }
 
-// THREAD 2 (Monitorização): Monitoriza um veículo específico
 void *monitorVeiculo(void *arg){
-    // 1. Desempacotar os argumentos
     ArgsMonitor *args = (ArgsMonitor*)arg;
     int fd_pipe = args->fd_pipe;
     DadosControl *d = args->dados;
-    free(args); // Libertar a memória do pacote
+    free(args); 
 
     char buffer[1024];
     ssize_t n;
     char resto[1024] = "";
 
-    // Ler do pipe do veículo
     while((n = read(fd_pipe, buffer, sizeof(buffer)-1)) > 0){
         buffer[n] = '\0';
         char temp[2048];
@@ -140,7 +125,7 @@ void *monitorVeiculo(void *arg){
         
         while ((fim_linha = strchr(inicio, '\n')) != NULL) {
             *fim_linha = '\0';
-            processa_telemetria(inicio, d); // Passar a estrutura 'd'
+            processa_telemetria(inicio, d); 
             inicio = fim_linha + 1;
         }
         strcpy(resto, inicio);
@@ -164,7 +149,6 @@ void mandaVeiculo(int index, DadosControl *d){
     }
 
     if (pid == 0){
-        // PROCESSO FILHO (O Veículo)
         close(fd_anonimo[0]);
         if (dup2(fd_anonimo[1], STDOUT_FILENO) == -1){
             perror("Erro no dup2");
@@ -172,7 +156,6 @@ void mandaVeiculo(int index, DadosControl *d){
         }
         close(fd_anonimo[1]);  
 
-        // Passar argumentos ao execl
         char arg_id[10], arg_pid[20], arg_dist[10];
         sprintf(arg_id, "%d", d->viagens[index].id);
         sprintf(arg_pid, "%d", d->viagens[index].pidCliente);
@@ -183,7 +166,6 @@ void mandaVeiculo(int index, DadosControl *d){
         exit(1);
 
     } else {
-        // PROCESSO PAI (Controlador)
         close(fd_anonimo[1]);
         printf("Veiculo lançado para a viagem %d\n", d->viagens[index].id);
 
@@ -191,11 +173,10 @@ void mandaVeiculo(int index, DadosControl *d){
         d->viagens[index].estado = 1;
         d->viagens[index].pidVeiculo = pid;
 
-        // Criar a THREAD DE MONITORIZAÇÃO para este veículo
         pthread_t t_monitor;
         ArgsMonitor *args_mon = malloc(sizeof(ArgsMonitor));
         args_mon->fd_pipe = fd_anonimo[0];
-        args_mon->dados = d; // Passar o ponteiro da estrutura principal
+        args_mon->dados = d; 
 
         if (pthread_create(&t_monitor, NULL, monitorVeiculo, args_mon) != 0){
             perror("Erro ao criar thread monitor");
@@ -206,9 +187,7 @@ void mandaVeiculo(int index, DadosControl *d){
     }
 }
 
-// THREAD 3 (Clientes): Processa um pedido de um cliente
 void *processaPedido(void *arg) {
-    // 1. Desempacotar argumentos
     ArgsPedido *args = (ArgsPedido*)arg;
     Pedido p = args->p;
     DadosControl *d = args->dados;
@@ -219,7 +198,7 @@ void *processaPedido(void *arg) {
     strcpy(r.mensagem, "Erro desconhecido");
     strcpy(r.dados_extra, "");
 
-    // printf("[Debug] Thread %lu a processar pedido de %s\n", (unsigned long)pthread_self(), p.username);
+    printf("[Debug] Thread %lu a processar pedido de %s\n", (unsigned long)pthread_self(), p.username);
     
     if (strcmp(p.comando, "login") == 0) {
         pthread_mutex_lock(&d->trinco); 
@@ -457,23 +436,19 @@ int main() {
     }
     printf("--------------- Controlador Iniciado -------\n");
 
-    // --- 2. LANÇAR THREADS (Passando o endereço da estrutura) ---
     
     pthread_t t_timer, t_admin;
     
-    // Lançar Timer (Thread 4)
     if(pthread_create(&t_timer, NULL, threadTempo, (void*)&dados) != 0) {
          perror("Erro thread tempo"); exit(1);
     }
     pthread_detach(t_timer);
 
-    // Lançar Admin (Thread 1)
     if(pthread_create(&t_admin, NULL, threadAdmin, (void*)&dados) != 0) {
          perror("Erro thread admin"); exit(1);
     }
     pthread_detach(t_admin);
 
-    // --- 3. LOOP PRINCIPAL (Atua como "Listener" de Clientes) ---
     
     int fd_fifo;
     Pedido p;

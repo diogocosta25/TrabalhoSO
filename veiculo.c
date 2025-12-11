@@ -12,25 +12,21 @@
 // Variável global para controlar se a viagem continua
 volatile sig_atomic_t continuar = 1;
 
-// Handler para quando o Controlador cancela a viagem (SIGUSR1)
 void trata_sinal(int s) {
     (void)s;
     continuar = 0;
 }
 
-// Função auxiliar para enviar mensagens ao cliente
 int envia_mensagem(int fd, Resposta *r) {
     if (write(fd, r, sizeof(Resposta)) == -1) {
-        return 0; // O cliente desligou-se
+        return 0; 
     }
     return 1;
 }
 
 int main(int argc, char *argv[]) {
-    // 1. Ignorar SIGPIPE para não crashar se o cliente fechar
     signal(SIGPIPE, SIG_IGN);
 
-    // 2. Ler argumentos passados pelo Controlador (execl)
     if (argc < 4) {
         fprintf(stderr, "Erro: argumentos insuficientes.\n");
         return 1;
@@ -38,16 +34,14 @@ int main(int argc, char *argv[]) {
 
     int id_viagem = atoi(argv[1]);
     int pid_cliente = atoi(argv[2]);
-    int distancia = atoi(argv[3]); // A distância vem do 'agendar'
+    int distancia = atoi(argv[3]); 
 
-    // 3. Configurar sinais
     struct sigaction sa;
     sa.sa_handler = trata_sinal;
     sa.sa_flags = 0;
     sigemptyset(&sa.sa_mask);
     sigaction(SIGUSR1, &sa, NULL);
 
-    // 4. Abrir o Pipe do Cliente (Só para escrever)
     char fifo_cliente[TAM_FIFO];
     snprintf(fifo_cliente, sizeof(fifo_cliente), "%s%d", CLIENTE_FIFO_BASE, pid_cliente);
 
@@ -57,11 +51,9 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // 5. INÍCIO AUTOMÁTICO (Sem esperar por 'entrar')
     Resposta r;
     r.sucesso = 1;
     
-    // Avisar o Controlador (stdout) e o Cliente (pipe) que chegámos
     printf("VIAGEM %d INICIADA (Auto-Start)\n", id_viagem);
     fflush(stdout); 
     
@@ -69,30 +61,23 @@ int main(int argc, char *argv[]) {
     strcpy(r.dados_extra, ""); 
     envia_mensagem(fd_cli, &r);
 
-    // 6. SIMULAÇÃO DA VIAGEM
     int percorrido = 0;
     int ultimo_aviso_perc = 0;
 
-    // Loop simples: 1 segundo = 1 Km (ou unidade de tempo)
     while (continuar && percorrido < distancia) {
         
-        sleep(1); // O tempo passa...
+        sleep(1); 
         percorrido++;
 
-        // Calcular percentagem
         int percentagem = (percorrido * 100) / distancia;
 
-        // Enviar atualização a cada 10% ou no final
         if (percentagem >= ultimo_aviso_perc + 10 || percorrido == distancia) {
             
-            // Relatório para o Controlador (Admin vê isto no comando 'frota')
             printf("VIAGEM %d %d%%\n", id_viagem, percentagem);
             fflush(stdout);
 
-            // Relatório para o Cliente (Cliente vê isto no ecrã)
             snprintf(r.mensagem, TAM_MENSAGEM, "Progresso: %d%%", percentagem);
             if (!envia_mensagem(fd_cli, &r)) {
-                // Cliente desapareceu, abortar
                 printf("VIAGEM %d ABORTADA (Cliente saiu)\n", id_viagem);
                 fflush(stdout);
                 continuar = 0;
@@ -103,16 +88,13 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // 7. CONCLUSÃO
     if (continuar) {
-        // Se saiu do loop porque chegou ao fim da distância
         printf("VIAGEM %d CONCLUIDA\n", id_viagem);
         fflush(stdout);
 
         snprintf(r.mensagem, TAM_MENSAGEM, "Chegámos ao destino! Viagem terminada.");
         envia_mensagem(fd_cli, &r);
     } 
-    // Se saiu do loop porque continuar=0, o controlador já sabe (foi ele que cancelou)
 
     close(fd_cli);
     return 0;
