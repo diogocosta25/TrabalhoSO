@@ -30,9 +30,14 @@ typedef struct {
 } Viagem;
 
 typedef struct {
+    char nome[TAM_NOME];
+    int pid;
+} UtilizadorInfo;
+
+typedef struct {
     Viagem viagens[MAX_SERVICOS];
     int nViagens;
-    char utilizadores[MAX_USERS][TAM_NOME];
+    UtilizadorInfo utilizadores[MAX_USERS];
     int n_users;
     int maxVeiculos;
     int veiculosCirculacao;
@@ -85,7 +90,7 @@ void processa_telemetria(char *linha, DadosControl *d) {
             }
         }
     }
-    else if (strstr(linha, "CONCLUIDA") != NULL || strstr(linha, "CANCELADA") != NULL) {
+    else if (strstr(linha, "CONCLUIDA") != NULL || strstr(linha, "CANCELADA") != NULL || strstr (linha, "ABORTADA") ) {
         int id_concl;
         sscanf(linha, "VIAGEM %d", &id_concl);
         int idx = id_concl - 1;
@@ -202,25 +207,40 @@ void *processaPedido(void *arg) {
     
     if (strcmp(p.comando, "login") == 0) {
         pthread_mutex_lock(&d->trinco); 
-        if (d->n_users < MAX_USERS) {
-            int existe = 0;
-            for (int i = 0; i < d->n_users; i++) {
-                if(strcmp(d->utilizadores[i], p.username) == 0) {
-                    existe = 1; break;
-                }
+
+        int userEncontrado=-1;
+
+        for (int i=0;i<d->n_users;i++){
+            if (strcmp(d->utilizadores[i].nome,p.username)==0){
+                userEncontrado=i;
+                break;
             }
-            if (!existe) {
-                strncpy(d->utilizadores[d->n_users], p.username, TAM_NOME);
-                d->n_users++;
-                r.sucesso = 1;
+        }
+
+        if (userEncontrado!=-1){
+            if (kill(d->utilizadores[userEncontrado].pid,0)==-1){
+                d->utilizadores[userEncontrado].pid=p.pid_cliente;
+                r.sucesso=1;
                 strcpy(r.mensagem, "Login com sucesso\n");
-                printf("Novo utilizador: %s\nADMIN>", p.username);
-            } else {
-                strcpy(r.mensagem, "User ja existe\n");
+                printf("Utilizador reconectado: %s\n", p.username);
+            }else{
+                r.sucesso=0;
+                strcpy(r.mensagem,"ERRO: user ja existe");
             }
+        }else{
+            if (d->n_users < MAX_USERS) {
+            strncpy(d->utilizadores[d->n_users].nome, p.username, TAM_NOME);
+            d->utilizadores[d->n_users].pid = p.pid_cliente; 
+            d->n_users++;
+            r.sucesso = 1;
+            strcpy(r.mensagem, "Login com sucesso\n");
+            printf("Novo utilizador: %s\nADMIN>", p.username);
         } else {
+            r.sucesso = 0;
             strcpy(r.mensagem, "Limite de users atingido\n");
         }
+        }
+        
         pthread_mutex_unlock(&d->trinco); 
         enviar_resposta(p.pid_cliente, &r);
     }
@@ -277,13 +297,12 @@ void *processaPedido(void *arg) {
         pthread_mutex_lock(&d->trinco);
         
         for(int i=0; i<d->nViagens; i++){
-            // Cancela se for o ID certo ou se ID for 0 (todos)
             if (d->viagens[i].pidCliente == p.pid_cliente && d->viagens[i].estado != 2) {
                 if (id_c == 0 || d->viagens[i].id == id_c) {
                     if (d->viagens[i].estado == 1) {
                         kill(d->viagens[i].pidVeiculo, SIGUSR1);
                     } else {
-                        d->viagens[i].estado = 2; // Cancelada
+                        d->viagens[i].estado = 2;
                     }
                     count++;
                 }
@@ -301,9 +320,8 @@ void *processaPedido(void *arg) {
     return NULL;
 }
 
-// THREAD 4 (Timer): Controla o tempo e lança veículos
 void *threadTempo(void *arg){
-    DadosControl *d = (DadosControl*)arg; // Recebe ponteiro para a struct
+    DadosControl *d = (DadosControl*)arg; 
     printf("Thread Timer ativada\n");
 
     while (1){
@@ -366,8 +384,10 @@ void *threadAdmin(void *arg){
             }
         }
         else if (strcmp(comando, "utiliz") == 0) {
-            printf("Users (%d):\n", d->n_users);
-            for(int i=0; i<d->n_users; i++) printf(" - %s\n", d->utilizadores[i]);
+           printf("Users (%d):\n", d->n_users);
+        for(int i=0; i<d->n_users; i++) {
+        printf(" - %s (PID: %d)\n", d->utilizadores[i].nome, d->utilizadores[i].pid);
+    }
         }
         else if (strcmp(comando, "cancelar")==0) {
             char *arg = strtok(NULL, " ");
@@ -396,7 +416,8 @@ void *threadAdmin(void *arg){
 
 void trata_ctrl_c(int s) {
     (void)s;
-    printf("\nControlador -> a limpar para fechar programa\n");
+    const char *msg = "\nControlador -> a limpar para fechar programa\n";
+    write(STDOUT_FILENO, msg, strlen(msg));
 
     if (ptr_dados_global) {
         for(int i = 0; i < ptr_dados_global->nViagens; i++) {
@@ -407,7 +428,7 @@ void trata_ctrl_c(int s) {
     }
 
     unlink(CONTROLADOR_FIFO);
-    exit(0);
+    _exit(0);
 }
 
 int main() {

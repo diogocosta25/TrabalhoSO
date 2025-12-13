@@ -103,34 +103,7 @@ int main(int argc, char *argv[]){
 
             if (!cmd) continue;
 
-            if (strcmp(cmd, "sair") == 0 || strcmp(cmd, "entrar") == 0) {
-                // comandos para o veiculo
-                if (strlen(fifo_veiculo_atual) == 0) {
-                    printf("Erro: Nenhum veiculo aguardando ou em viagem.\n");
-                    continue;
-                }
-
-                int fd_veic = open(fifo_veiculo_atual, O_WRONLY);
-                if (fd_veic == -1) {
-                    perror("Erro ao comunicar com veiculo");
-                    strcpy(fifo_veiculo_atual, "");
-                    continue;
-                }
-
-                PedidoVeiculo pv;
-                if (strcmp(cmd, "entrar") == 0) {
-                    if (arg == NULL) { printf("Uso: entrar <destino>\n"); close(fd_veic); continue; }
-                    pv.codigo = 1;
-                    strncpy(pv.destino, arg, TAM_ARGUMENTOS);
-                } else { // sair
-                    pv.codigo = 2;
-                    strcpy(pv.destino, "");
-                }
-
-                write(fd_veic, &pv, sizeof(PedidoVeiculo));
-                close(fd_veic);
-
-            } else if (strcmp(cmd, "terminar") == 0) {
+            if (strcmp(cmd, "terminar") == 0) {
                 if (strlen(fifo_veiculo_atual) > 0) {
                     printf("Erro: Nao pode sair durante uma viagem! Use 'sair' primeiro.\n");
                     continue;

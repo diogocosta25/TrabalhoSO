@@ -94,7 +94,10 @@ int main(int argc, char *argv[]) {
 
         snprintf(r.mensagem, TAM_MENSAGEM, "Chegámos ao destino! Viagem terminada.");
         envia_mensagem(fd_cli, &r);
-    } 
+    } else{
+        printf("VIAGEM %d CANCELADA\n", id_viagem);
+        fflush(stdout);
+    }
 
     close(fd_cli);
     return 0;
